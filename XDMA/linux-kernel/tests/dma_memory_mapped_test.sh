@@ -258,11 +258,25 @@ else
 	    cmp "$out_file" "$in_file" -n "$transferSz"
 	    rc=$?
 
+	    start=$((i * transferSz))
+	    end=$(((i + 1) * transferSz - 1))
+
 	    if [ $rc -ne 0 ]; then
 			log "FAIL: Data mismatch for block i=${i}"
-			log "      address range: ${start} - ${end}"
-			log "      write file:    ${in_file}"
-			log "      read file:     ${out_file}"
+			log "      address range (FPGA offset): ${start} - ${end}"
+			log "      write file: ${in_file}"
+			log "      read  file: ${out_file}"
+
+			echo ""
+			echo "========== EXPECTED DATA (input file) =========="
+			hexdump -C -n "$transferSz" "$in_file"
+
+			echo ""
+			echo "========== ACTUAL DATA (output file) =========="
+			hexdump -C -n "$transferSz" "$out_file"
+			echo "================================================"
+			echo ""
+
 			testError=1
     	else
 			log "PASS: Data matched for block i=${i}"
