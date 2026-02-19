@@ -12,6 +12,43 @@
 #        - number of H2C channels (Host -> Card writes)
 #        - number of C2H channels (Card -> Host reads)
 #
+#
+# 	Running the script:
+# 	sudo ./dma_memory_mapped_test.sh <xdma id> <io size> <io count> <h2c #> <c2h #>
+#
+# Argument 1: <xdma id>
+# Example: xdma0
+#
+# Description: Base name used to build device node paths.
+# 	- /dev/xdma0_h2c_0 (host -> card, channel 0)
+# 	- /dev/xdma0_c2h_0 (card -> host, channel 0)
+#
+# Argument 2: <io size>
+# Example: 1024
+# Description: How many bytes to transfer per block.
+# 	- Should be a power of 2.
+# 	- If transferSz=1024, then each write/read will be 1024 bytes.
+#
+# Argument 3: <io count>
+# Example: 1
+# Description: How many times to repeat the transfer.
+# 	- If ioCount=1, then each write/read will be repeated 1 time.
+# 	- If ioCount=100, do 100 transfers (usually sequentially) of the same size to/from that address range.
+# 	- This is useful for stress testing or reliability testing.
+#
+# Argument 4: <h2c #>
+# Example: 4
+# Description: How many H2C channels to use.
+# 	- If h2cChannels=4, then 4 channels will be used to write data to the FPGA.
+# 	- If h2cChannels=0, then no H2C channels will be used.
+#
+# Argument 5: <c2h #>
+# Example: 4
+# Description: How many C2H channels to use.
+# 	- If c2hChannels=4, then 4 channels will be used to read data from the FPGA.
+# 	- If c2hChannels=0, then no C2H channels will be used.
+#
+#
 #   2) The script writes 4 chunks of data into 4 address regions on the FPGA,
 #      using H2C channels in a round-robin pattern, with parallel background jobs.
 #
@@ -231,8 +268,6 @@ else
 			log "PASS: Data matched for block i=${i}"
     	fi
 	done
-else
-	warn "No data verification."
 fi
 
 # 		cmp data/output_datafile${i}_4K.bin data/datafile${i}_4K.bin \
