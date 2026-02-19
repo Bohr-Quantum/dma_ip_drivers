@@ -101,7 +101,7 @@ parse_int_list() {
     done
 }
 
-# Resolve which blocks to test and write/read order. Sets global arrays:
+# Resolve which blocks to test and write/read order. Sets:
 #   block_list, write_order, read_order
 # - If -b was provided, block_list is that list; else 0..(numBlocks-1).
 # - write_order: from -W, else -o, else block_list.
@@ -223,14 +223,14 @@ done
 
 # ----------------------------- sanity checks --------------------------------
 
-# Ensure numbers look like numbers (basic check).
+# Basic sanity check
 [[ "$transferSz" =~ ^[0-9]+$ ]] || die "io size must be an integer bytes value. Got: '$transferSz'"
 [[ "$transferCount" =~ ^[0-9]+$ ]] || die "io count must be an integer. Got: '$transferCount'"
 [[ "$h2cChannels" =~ ^[0-9]+$ ]] || die "h2c # must be an integer. Got: '$h2cChannels'"
 [[ "$c2hChannels" =~ ^[0-9]+$ ]] || die "c2h # must be an integer. Got: '$c2hChannels'"
 [[ "$numBlocks" =~ ^[0-9]+$ ]] || die "numBlocks (-n) must be a non-negative integer. Got: '$numBlocks'"
 
-# Resolve block list and write/read orders (also validates datafiles exist)
+# Validation
 resolve_block_and_orders "$numBlocks" "$blockListArg" "$orderArg" "$writeOrderArg" "$readOrderArg"
 
 tool_path=../tools
@@ -250,9 +250,7 @@ log "xid='${xid}', transferSz=${transferSz}, transferCount=${transferCount}, h2c
 # If h2cChannels > 0, we write blocks in write_order. Channel round-robin is
 # based on iteration index: curChannel = iterationIndex % h2cChannels.
 # addrOffset = transferSz * blockIndex (block index, not iteration).
-#
-# We run each dma_to_device in the background (&); after we have started one
-# job on each available channel, we call `wait` before starting more.
+# 
 ###############################################################################
 
 if [ $h2cChannels -gt 0 ]; then
@@ -340,7 +338,7 @@ log "C2H reads completed."
 # If cmp returns non-zero, data mismatch occurred.
 ###############################################################################
 
-# Verify that the written data matches the read data if possible.
+# Verify that the written data matches the read data
 if [ $h2cChannels -eq 0 ]; then
 	log "No verification: h2cChannels=0 (nothing was written)."
 elif [ $c2hChannels -eq 0 ]; then
@@ -367,7 +365,6 @@ else
 			log "      write file: ${in_file}"
 			log "      read  file: ${out_file}"
 
-			# Hexdump on failure only when -v (verbose) is set
 			if [ "$verboseHexdump" -eq 1 ]; then
 				echo ""
 				echo "========== EXPECTED DATA (input file) =========="
