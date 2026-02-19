@@ -84,22 +84,111 @@ die() {
     exit 1
 }
 
+# Parse a comma-separated list of integers into a global array (name in $2).
+# Usage: parse_int_list "0,2,1" block_list  -> block_list=(0 2 1)
+parse_int_list() {
+    local list="$1"
+    local arrname="$2"
+    eval "$arrname=()"
+    [[ -z "$list" ]] && return
+    local parts p
+    IFS=',' read -ra parts <<< "$list"
+    for p in "${parts[@]}"; do
+        p=$(echo "$p" | tr -d ' ')
+        [[ -z "$p" ]] && continue
+        [[ "$p" =~ ^[0-9]+$ ]] || die "Block/order list must be comma-separated non-negative integers. Got: '$p' in '$list'"
+        eval "$arrname+=(\"$p\")"
+    done
+}
+
+# Resolve which blocks to test and write/read order. Sets global arrays:
+#   block_list, write_order, read_order
+# - If -b was provided, block_list is that list; else 0..(numBlocks-1).
+# - write_order: from -W, else -o, else block_list.
+# - read_order: from -R, else -o, else block_list.
+# Validates: all indices >= 0 (integers). Optionally validate uniqueness (allow repeats if -b is used).
+# Offsets: addrOffset = transferSz * blockIndex (block index, not iteration index).
+resolve_block_and_orders() {
+    local n=$1
+    local b_arg="$2"
+    local o_arg="$3"
+    local w_arg="$4"
+    local r_arg="$5"
+
+    if [[ -n "$b_arg" ]]; then
+        parse_int_list "$b_arg" block_list
+    else
+        block_list=()
+        for ((i=0; i<n; i++)); do block_list+=( "$i" ); done
+    fi
+
+    if [[ -n "$w_arg" ]]; then
+        parse_int_list "$w_arg" write_order
+    elif [[ -n "$o_arg" ]]; then
+        parse_int_list "$o_arg" write_order
+    else
+        write_order=( "${block_list[@]}" )
+    fi
+
+    if [[ -n "$r_arg" ]]; then
+        parse_int_list "$r_arg" read_order
+    elif [[ -n "$o_arg" ]]; then
+        parse_int_list "$o_arg" read_order
+    else
+        read_order=( "${block_list[@]}" )
+    fi
+
+    # Require datafiles for every block index that appears in write_order or read_order
+    for bi in "${write_order[@]}" "${read_order[@]}"; do
+        local df="data/datafile${bi}_4K.bin"
+        if [[ ! -f "$df" ]]; then
+            die "Required data file missing: $df (block index $bi). Create it or adjust -b/-o/-W/-R."
+        fi
+    done
+}
+
 display_help() {
-	echo "$0 <xdma id> <io size> <io count> <h2c #> <c2h #>"
-	echo -e "xdma id:\txdma[N] "
-	echo -e "io size:\tdma transfer size in byte"
-	echo -e "io count:\tdma transfer count"
-       	echo -e "h2c #:\tnumber of h2c channels"
-	echo -e "c2h #:\tnumber of c2h channels"
-       	echo
-       
+	echo "Usage: $0 <xdma id> <io size> <io count> <h2c #> <c2h #> [options]"
+	echo ""
+	echo "Positional arguments (required):"
+	echo "  xdma id    \txdma[N], e.g. xdma0"
+	echo "  io size    \tDMA transfer size in bytes"
+	echo "  io count   \tDMA transfer count"
+	echo "  h2c #      \tnumber of H2C channels"
+	echo "  c2h #      \tnumber of C2H channels"
+	echo ""
+	echo "Optional flags (after the 5 positionals):"
+	echo "  -n <numBlocks>   number of blocks to test (default: 4); ignored if -b is used"
+	echo "  -b <blockList>   explicit block indices, e.g. \"0,2\" (overrides -n)"
+	echo "  -o <order>       write+read order, e.g. \"2,0,1,3\" (default: 0,1,2,...)"
+	echo "  -W <order>       write order only (if unset, use -o or default)"
+	echo "  -R <order>       read order only (if unset, use -o or default)"
+	echo "  -s               stop on first verify failure"
+	echo "  -v               verbose: print hexdumps on compare failure (default: off)"
+	echo "  -h               show this help"
+	echo ""
+	echo "Examples:"
+	echo "  # Default: 4 blocks, order 0,1,2,3"
+	echo "  sudo $0 xdma0 32 1 1 1"
+	echo ""
+	echo "  # One block only (block 0)"
+	echo "  sudo $0 xdma0 32 1 1 1 -b 0"
+	echo ""
+	echo "  # Reorder: write and read in order 2,0,1,3"
+	echo "  sudo $0 xdma0 32 1 1 1 -o 2,0,1,3"
+	echo ""
+	echo "  # Only two blocks (0 and 2)"
+	echo "  sudo $0 xdma0 32 1 1 1 -b 0,2"
+	echo ""
+	echo "  # Separate write and read order"
+	echo "  sudo $0 xdma0 32 1 1 1 -W 2,0,1,3 -R 0,2,1,3"
+	echo ""
 	exit 1
 }
 
-if [ $# -eq 0 ]; then
+if [ $# -lt 5 ]; then
 	display_help
 fi
-
 
 # ----------------------------- argument parsing -----------------------------
 xid=$1
@@ -107,6 +196,30 @@ transferSz=$2
 transferCount=$3
 h2cChannels=$4
 c2hChannels=$5
+shift 5
+
+# Optional (defaults)
+numBlocks=4
+blockListArg=""
+orderArg=""
+writeOrderArg=""
+readOrderArg=""
+stopOnFailure=0
+verboseHexdump=0
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -n) numBlocks=$2; shift 2 ;;
+        -b) blockListArg=$2; shift 2 ;;
+        -o) orderArg=$2; shift 2 ;;
+        -W) writeOrderArg=$2; shift 2 ;;
+        -R) readOrderArg=$2; shift 2 ;;
+        -s) stopOnFailure=1; shift ;;
+        -v) verboseHexdump=1; shift ;;
+        -h) display_help ;;
+        *) die "Unknown option: $1. Use -h for help." ;;
+    esac
+done
 
 # ----------------------------- sanity checks --------------------------------
 
@@ -115,6 +228,10 @@ c2hChannels=$5
 [[ "$transferCount" =~ ^[0-9]+$ ]] || die "io count must be an integer. Got: '$transferCount'"
 [[ "$h2cChannels" =~ ^[0-9]+$ ]] || die "h2c # must be an integer. Got: '$h2cChannels'"
 [[ "$c2hChannels" =~ ^[0-9]+$ ]] || die "c2h # must be an integer. Got: '$c2hChannels'"
+[[ "$numBlocks" =~ ^[0-9]+$ ]] || die "numBlocks (-n) must be a non-negative integer. Got: '$numBlocks'"
+
+# Resolve block list and write/read orders (also validates datafiles exist)
+resolve_block_and_orders "$numBlocks" "$blockListArg" "$orderArg" "$writeOrderArg" "$readOrderArg"
 
 tool_path=../tools
 dma_to="${tool_path}/dma_to_device"
@@ -130,45 +247,36 @@ log "xid='${xid}', transferSz=${transferSz}, transferCount=${transferCount}, h2c
 # STEP 1: WRITE (Host -> Card)
 ###############################################################################
 #
-# If h2cChannels > 0, we write 4 blocks. We choose which channel to use by:
-#     curChannel = i % h2cChannels
+# If h2cChannels > 0, we write blocks in write_order. Channel round-robin is
+# based on iteration index: curChannel = iterationIndex % h2cChannels.
+# addrOffset = transferSz * blockIndex (block index, not iteration).
 #
-# We run each dma_to_device command in the background (&) so multiple channels
-# can be active at once.
-#
-# After we have started one job on each available channel, we call `wait` to
-# wait for those background jobs to finish before starting more.
+# We run each dma_to_device in the background (&); after we have started one
+# job on each available channel, we call `wait` before starting more.
 ###############################################################################
 
 if [ $h2cChannels -gt 0 ]; then
 	log "Starting H2C writes (Host -> Card)..."
-	# Loop over four blocks of size $transferSz and write to them
-	for ((i=0; i<=3; i++)); do
-		addrOffset=$(($transferSz * $i))
-		curChannel=$(($i % $h2cChannels))
-		
+	iter=0
+	for blockIndex in "${write_order[@]}"; do
+		addrOffset=$(($transferSz * blockIndex))
+		curChannel=$((iter % h2cChannels))
 		dev="/dev/${xid}_h2c_${curChannel}"
-    	in_file="data/datafile${i}_4K.bin"
+		in_file="data/datafile${blockIndex}_4K.bin"
 
-		log "WRITE block i=${i}: channel=${curChannel}, dev=${dev}, offset=${addrOffset}, size=${transferSz}, count=${transferCount}, file=${in_file}"
-
-		# $dma_to -d ${dev} -f ${in_file} -s ${transferSz} -a ${addrOffset} -c ${transferCount} &
-		# $tool_path/dma_to_device -d /dev/${xid}_h2c_${curChannel} \
-		#        	-f data/datafile${i}_4K.bin -s $transferSz \
-		# 	-a $addrOffset -c $transferCount &
+		log "WRITE blockIndex=${blockIndex} iterationIndex=${iter} channel=${curChannel} offset=${addrOffset} dev=${dev} file=${in_file}"
 
 		"$dma_to" \
-      		-d "$dev" \
-      		-f "$in_file" \
-      		-s "$transferSz" \
-      		-a "$addrOffset" \
-      		-c "$transferCount" &
-		# If all channels have active transactions we must wait for
-	        # them to complete
-		if [ $(($curChannel+1)) -eq $h2cChannels ]; then
-      		log "H2C: all channels busy; waiting for current writes to finish..."
-      		wait
+			-d "$dev" \
+			-f "$in_file" \
+			-s "$transferSz" \
+			-a "$addrOffset" \
+			-c "$transferCount" &
+		if [ $((curChannel + 1)) -eq $h2cChannels ]; then
+			log "H2C: all channels busy; waiting for current writes to finish..."
+			wait
 		fi
+		iter=$((iter + 1))
 	done
 else
 	warn "No H2C channels enabled. Skipping write test."
@@ -182,44 +290,34 @@ log "H2C writes completed."
 # STEP 2: READ (Card -> Host)
 ###############################################################################
 #
-# If c2hChannels > 0, we read 4 blocks back from the same offsets.
-# Same channel selection pattern:
-#     curChannel = i % c2hChannels
-#
-# Also parallelized with background jobs and `wait`.
+# If c2hChannels > 0, we read blocks in read_order. Channel round-robin is
+# based on iteration index: curChannel = iterationIndex % c2hChannels.
+# addrOffset = transferSz * blockIndex.
 ###############################################################################
 if [ $c2hChannels -gt 0 ]; then
 	log "Starting C2H reads (Card -> Host)..."
-	# Loop over four blocks of size $transferSz and read from them
-	for ((i=0; i<=3; i++)); do
-		addrOffset=$(($transferSz * $i))
-		curChannel=$(($i % $c2hChannels))
-
+	iter=0
+	for blockIndex in "${read_order[@]}"; do
+		addrOffset=$(($transferSz * blockIndex))
+		curChannel=$((iter % c2hChannels))
 		dev="/dev/${xid}_c2h_${curChannel}"
-    	out_file="data/output_datafile${i}_4K.bin"
+		out_file="data/output_datafile${blockIndex}_4K.bin"
 
-    	# Remove any previous output so we don't accidentally compare stale data.
-    	rm -f "$out_file"
+		rm -f "$out_file"
 
-		log "READ  block i=${i}: channel=${curChannel}, dev=${dev}, offset=${addrOffset}, size=${transferSz}, count=${transferCount}, out=${out_file}"
+		log "READ  blockIndex=${blockIndex} iterationIndex=${iter} channel=${curChannel} offset=${addrOffset} dev=${dev} out=${out_file}"
 
-    	"$dma_from" \
-      		-d "$dev" \
-      		-f "$out_file" \
-      		-s "$transferSz" \
-      		-a "$addrOffset" \
-      		-c "$transferCount" &
-		# echo "Info: Reading from c2h channel $curChannel at " \
-		# 	"address offset $addrOffset."
-		# $tool_path/dma_from_device -d /dev/${xid}_c2h_${curChannel} \
-		#        	-f data/output_datafile${i}_4K.bin -s $transferSz \
-		#        	-a $addrOffset -c $transferCount &
-		# If all channels have active transactions we must wait for
-	        # them to complete
-		if [ $(($curChannel+1)) -eq $c2hChannels ]; then
+		"$dma_from" \
+			-d "$dev" \
+			-f "$out_file" \
+			-s "$transferSz" \
+			-a "$addrOffset" \
+			-c "$transferCount" &
+		if [ $((curChannel + 1)) -eq $c2hChannels ]; then
 			log "C2H: all channels busy; waiting for current reads to finish..."
 			wait
 		fi
+		iter=$((iter + 1))
 	done
 else
 	warn "No C2H channels enabled. Skipping read test."
@@ -249,59 +347,49 @@ elif [ $c2hChannels -eq 0 ]; then
 	warn "No data verification: c2hChannels=0 (nothing was read)."
 else
 	log "Checking data integrity..."
-	for ((i=0; i<=3; i++)); do
-	    in_file="data/datafile${i}_4K.bin"
-	    out_file="data/output_datafile${i}_4K.bin"
+	iter=0
+	for blockIndex in "${read_order[@]}"; do
+		in_file="data/datafile${blockIndex}_4K.bin"
+		out_file="data/output_datafile${blockIndex}_4K.bin"
+		addrOffset=$((transferSz * blockIndex))
 
-	    log "VERIFY block i=${i}: in=${in_file}, out=${out_file}, size=${transferSz}"
+		log "VERIFY blockIndex=${blockIndex} iterationIndex=${iter} offset=${addrOffset} in=${in_file} out=${out_file} size=${transferSz}"
 
-	    cmp "$out_file" "$in_file" -n "$transferSz"
-	    rc=$?
+		cmp "$out_file" "$in_file" -n "$transferSz"
+		rc=$?
 
-	    start=$((i * transferSz))
-	    end=$(((i + 1) * transferSz - 1))
+		start=$((blockIndex * transferSz))
+		end=$(((blockIndex + 1) * transferSz - 1))
 
-	    if [ $rc -ne 0 ]; then
-			log "FAIL: Data mismatch for block i=${i}"
+		if [ $rc -ne 0 ]; then
+			log "FAIL: Data mismatch for blockIndex=${blockIndex}"
 			log "      address range (FPGA offset): ${start} - ${end}"
 			log "      write file: ${in_file}"
 			log "      read  file: ${out_file}"
 
-			echo ""
-			echo "========== EXPECTED DATA (input file) =========="
-			hexdump -C -n "$transferSz" "$in_file"
-
-			echo ""
-			echo "========== ACTUAL DATA (output file) =========="
-			hexdump -C -n "$transferSz" "$out_file"
-			echo "================================================"
-			echo ""
+			# Hexdump on failure only when -v (verbose) is set
+			if [ "$verboseHexdump" -eq 1 ]; then
+				echo ""
+				echo "========== EXPECTED DATA (input file) =========="
+				hexdump -C -n "$transferSz" "$in_file"
+				echo ""
+				echo "========== ACTUAL DATA (output file) =========="
+				hexdump -C -n "$transferSz" "$out_file"
+				echo "================================================"
+				echo ""
+			fi
 
 			testError=1
-    	else
-			log "PASS: Data matched for block i=${i}"
-    	fi
+			if [ "$stopOnFailure" -eq 1 ]; then
+				log "Stopping on first failure (-s)."
+				break
+			fi
+		else
+			log "PASS: Data matched for blockIndex=${blockIndex}"
+		fi
+		iter=$((iter + 1))
 	done
 fi
-
-# 		cmp data/output_datafile${i}_4K.bin data/datafile${i}_4K.bin \
-# 			-n $transferSz
-# 		returnVal=$?
-# 	       	if [ ! $returnVal == 0 ]; then
-# 			echo "Error: The data written did not match the data" \
-# 			       " that was read."
-# 			echo -e "\taddress range: " \
-# 				"$(($i*$transferSz)) - $((($i+1)*$transferSz))"
-# 			echo -e "\twrite data file: data/datafile${i}_4K.bin"
-# 			echo -e "\tread data file:  data/output_datafile${i}_4K.bin"
-# 			testError=1
-# 		else
-# 			echo "Info: Data check passed for address range " \
-# 				"$(($i*$transferSz)) - $((($i+1)*$transferSz))"
-# 		fi
-# 	done
-# fi
-
 
 ###############################################################################
 # STEP 4: EXIT STATUS
