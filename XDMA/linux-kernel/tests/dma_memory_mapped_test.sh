@@ -6,11 +6,11 @@
 #  This is a "write some bytes, read them back, compare files" test for XDMA.
 #
 #   1) Arguments:
-#        - which XDMA device name to use (like xdma0)
-#        - transfer size (bytes)
-#        - transfer count (how many transfers)
-#        - number of H2C channels (Host -> Card writes)
-#        - number of C2H channels (Card -> Host reads)
+    #    - which XDMA device name to use (like xdma0)
+    #    - transfer size (bytes)
+    #    - transfer count (how many transfers)
+    #    - number of H2C channels (Host -> Card writes)
+    #    - number of C2H channels (Card -> Host reads)
 #
 #
 # 	Running the script:
