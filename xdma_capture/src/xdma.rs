@@ -199,26 +199,6 @@ pub fn write_then_read(
     Ok(dma_buf)
 }
 
-// Read from C2H at addr into an aligned buffer (for capture).
-pub fn read_c2h_into_buffer(
-    xid: &str,
-    chan: u32,
-    addr: u64,
-    len: usize,
-) -> Result<DmaBuffer, XdmaError> {
-    let c2h_path = c2h_node_path(xid, chan);
-    let mut dma_buf = DmaBuffer::new(len).map_err(|_| XdmaError::PreadShort {
-        path: c2h_path.clone(),
-        offset: addr,
-        len,
-        read: 0,
-        source: Errno::ENOMEM,
-    })?;
-    let c2h_fd = open_c2h(xid, chan)?;
-    pread_loop(c2h_fd.as_fd(), dma_buf.as_mut_slice(), addr, &c2h_path)?;
-    Ok(dma_buf)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

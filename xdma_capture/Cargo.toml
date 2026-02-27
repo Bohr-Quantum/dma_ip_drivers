@@ -2,7 +2,7 @@
 name = "xdma_capture"
 version = "0.1.0"
 edition = "2021"
-description = "POC: XDMA H2C/C2H loopback and capture in AXI-MM mode"
+description = "POC: XDMA H2C/C2H memory mapped capture impl"
 license = "MIT OR Apache-2.0"
 
 [dependencies]

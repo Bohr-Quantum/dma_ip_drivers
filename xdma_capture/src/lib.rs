@@ -7,42 +7,21 @@ pub use buffer::{AllocError, DmaBuffer};
 pub use input::{read_first_len_bytes, InputError};
 pub use verify::{verify, VerifyError};
 pub use xdma::{
-    c2h_node_path, h2c_node_path, open_c2h, open_h2c, read_c2h_into_buffer, write_then_read,
+    c2h_node_path, h2c_node_path, open_c2h, open_h2c, write_then_read,
     XdmaError,
 };
 
-use std::num::ParseIntError;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 
-// Parse address from hex (0x...) or decimal string.
-pub fn parse_addr(s: &str) -> Result<u64, ParseIntError> {
-    let s = s.trim();
-    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16)
-    } else {
-        s.parse::<u64>()
-    }
-}
-
-// Configuration for the loopback operation.
+/// Configuration for the capture operation.
 #[derive(Clone, Debug)]
-pub struct LoopbackConfig {
+pub struct CaptureConfig {
     pub xid: String,
     pub chan: u32,
     pub len: usize,
     // Input file: first `len` bytes are used as write payload.
     pub input_path: PathBuf,
-}
-
-// Configuration for the capture (read-only dump) operation.
-#[derive(Clone, Debug)]
-pub struct CaptureConfig {
-    pub xid: String,
-    pub chan: u32,
-    pub addr: u64,
-    pub len: usize,
-    pub out_path: PathBuf,
 }
 
 #[derive(Error, Debug)]
@@ -58,7 +37,7 @@ pub enum CaptureError {
 }
 
 // Step 5: Write the read-back bytes to a file
-pub fn loopback(cfg: &LoopbackConfig) -> Result<(), CaptureError> {
+pub fn capture(cfg: &CaptureConfig) -> Result<(), CaptureError> {
     // Read payload from input file
     let payload = read_first_len_bytes(&cfg.input_path, cfg.len)?;
 
@@ -110,47 +89,17 @@ pub fn loopback(cfg: &LoopbackConfig) -> Result<(), CaptureError> {
     Ok(())
 }
 
-// Run capture: read len bytes from C2H at addr, write to out_path.
-pub fn capture_to_file(cfg: &CaptureConfig) -> Result<(), CaptureError> {
-    // Read the data from C2H
-    let buf = xdma::read_c2h_into_buffer(&cfg.xid, cfg.chan, cfg.addr, cfg.len)?;
-    // Write the data to a file
-    let mut f = std::fs::File::options()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(&cfg.out_path)?;
-    // Write the data to the file
-    std::io::Write::write_all(&mut f, buf.as_slice())?;
-    f.sync_all()?;
-    drop(f);
-    let meta = std::fs::metadata(&cfg.out_path)?;
-    if meta.len() != cfg.len as u64 {
-        return Err(CaptureError::Output(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!(
-                "output file size {} != expected {}",
-                meta.len(),
-                cfg.len
-            ),
-        )));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn parse_addr_hex() {
-        assert_eq!(parse_addr("0x1000"), Ok(4096));
-        assert_eq!(parse_addr("0Xdead"), Ok(0xdead));
-    }
-
-    #[test]
-    fn parse_addr_decimal() {
-        assert_eq!(parse_addr("4096"), Ok(4096));
-        assert_eq!(parse_addr("0"), Ok(0));
+    fn capture_config_has_required_fields() {
+        let _ = CaptureConfig {
+            xid: "xdma0".into(),
+            chan: 0,
+            len: 4096,
+            input_path: PathBuf::from("data/foo.bin"),
+        };
     }
 }
